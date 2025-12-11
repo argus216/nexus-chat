@@ -19,7 +19,7 @@ export const POST = apiHandler(async (req) => {
         };
     }
 
-    const tempToken = req.cookies.get("temptoken")?.value;
+    const tempToken = req.cookies.get("temp_token")?.value;
 
     if (!tempToken) {
         return {

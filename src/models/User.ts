@@ -8,6 +8,9 @@ export interface IUser extends Document {
     phone?: string;
     groups: mongoose.Types.ObjectId[];
     friends: mongoose.Types.ObjectId[];
+
+    createdAt: Date;
+    updatedAt: Date;
 }
 
 const UserSchema: Schema = new Schema(

@@ -1,14 +1,26 @@
 "use client";
 
-import React, { useState } from "react";
-import { Mail, Phone, Check, X, Send, Loader2, Trash2 } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import {
+    Mail,
+    Phone,
+    Check,
+    X,
+    Send,
+    Loader2,
+    Trash2,
+    TriangleAlert,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/InputWithLabel";
 import { Invitation } from "@/types/Invitation";
 import { Avatar } from "@/components/Avatar";
+import { pusherClient } from "@/lib/pusher";
+import { useSession } from "@/components/SessionProvider";
+import { fetchClient } from "@/utils/fetchClient";
 
 export default function Invitations({
-    invitations,
+    invitations: invitationProp,
 }: {
     invitations: {
         sent: Invitation[];
@@ -18,6 +30,50 @@ export default function Invitations({
     const [activeTab, setActiveTab] = useState<"received" | "send" | "sent">(
         "send"
     );
+    const [invitations, setInvitations] = useState(invitationProp);
+    const { session } = useSession();
+
+    useEffect(() => {
+        console.log(session);
+        if (!session) return;
+        const pusher = pusherClient.subscribe(
+            `invitation__${session.user._id}`
+        );
+
+        pusher.bind("invitation_received", (data: Invitation) => {
+            setInvitations((prev) => ({
+                ...prev,
+                received: [...prev.received, data],
+            }));
+        });
+
+        pusher.bind("invitation_deleted", (data: Invitation) => {
+            setInvitations((prev) => ({
+                ...prev,
+                received: prev.received.filter(
+                    (invite) => invite._id !== data._id
+                ),
+            }));
+        });
+
+        pusher.bind("invitation_updated", (data: Invitation) => {
+            setInvitations((prev) => ({
+                ...prev,
+                received: prev.received.map((invite) =>
+                    invite._id === data._id
+                        ? { ...invite, status: data.status }
+                        : invite
+                ),
+            }));
+        });
+
+        return () => {
+            pusher.unbind("invitation_received");
+            pusher.unbind("invitation_deleted");
+            pusher.unbind("invitation_updated");
+            pusherClient.unsubscribe(`invitation__${session.user._id}`);
+        };
+    }, [session]);
 
     return (
         <div className="h-full bg-white flex flex-col max-w-2xl mx-auto w-full pt-10 px-4">
@@ -62,25 +118,69 @@ export default function Invitations({
                     Received
                     {invitations.received.length > 0 && (
                         <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">
-                            {invitations.received.length}
+                            {
+                                invitations.received.filter(
+                                    (i) => i.status !== "deleted"
+                                ).length
+                            }
                         </span>
                     )}
                 </button>
             </div>
 
-            {activeTab === "send" && <SendInvitation />}
+            {activeTab === "send" && (
+                <SendInvitation setInvitations={setInvitations} />
+            )}
             {activeTab === "received" && (
-                <ReceivedInvitations invitations={invitations.received} />
+                <ReceivedInvitations
+                    invitations={invitations.received.filter(
+                        (invite) => invite.status !== "deleted"
+                    )}
+                    setInvitations={setInvitations}
+                />
             )}
             {activeTab === "sent" && (
-                <SentInvitations invitations={invitations.sent} />
+                <SentInvitations
+                    invitations={invitations.sent.filter(
+                        (i) => !["accepted", "rejected"].includes(i.status)
+                    )}
+                    setInvitations={setInvitations}
+                />
             )}
         </div>
     );
 }
 
-function SentInvitations({ invitations }: { invitations: Invitation[] }) {
-    async function handleInvitationDelete(id: string) {}
+function SentInvitations({
+    invitations,
+    setInvitations,
+}: {
+    invitations: Invitation[];
+    setInvitations: React.Dispatch<
+        React.SetStateAction<{ sent: Invitation[]; received: Invitation[] }>
+    >;
+}) {
+    async function handleInvitationDelete(id: string) {
+        const res = await fetchClient("/users/invitations", {
+            method: "DELETE",
+            data: { id },
+            showToast: true,
+        });
+        if (res.success) {
+            setInvitations((prev) => ({
+                ...prev,
+                sent: prev.sent.map((invite) => {
+                    if (invite._id === id) {
+                        return {
+                            ...invite,
+                            status: "deleted",
+                        };
+                    }
+                    return invite;
+                }),
+            }));
+        }
+    }
     return (
         <div className="space-y-4">
             {invitations.length === 0 ? (
@@ -111,20 +211,30 @@ function SentInvitations({ invitations }: { invitations: Invitation[] }) {
                                         : "Connect as Friends"}
                                 </p>
                                 <p className="text-xs text-gray-400 mt-1">
-                                    {invite.createdAt.toLocaleDateString()}
+                                    {new Date(
+                                        invite.createdAt
+                                    ).toLocaleDateString()}
                                 </p>
                             </div>
                         </div>
                         <div className="flex gap-2">
-                            <Button
-                                variant="destructive"
-                                onClick={() =>
-                                    handleInvitationDelete(invite._id)
-                                }
-                            >
-                                <Trash2 className="h-4 w-4" />
-                                Delete
-                            </Button>
+                            {invite.status === "pending" && (
+                                <Button
+                                    variant="destructive"
+                                    onClick={() =>
+                                        handleInvitationDelete(invite._id)
+                                    }
+                                >
+                                    <Trash2 className="h-4 w-4" />
+                                    Delete
+                                </Button>
+                            )}
+                            {invite.status === "deleted" && (
+                                <div className="flex items-center flex-row gap-2 px-4 py-2 rounded bg-red-500/50 cursor-pointer text-white">
+                                    <X size={16} />
+                                    <p className="text-sm">Deleted</p>
+                                </div>
+                            )}
                         </div>
                     </div>
                 ))
@@ -133,11 +243,39 @@ function SentInvitations({ invitations }: { invitations: Invitation[] }) {
     );
 }
 
-function ReceivedInvitations({ invitations }: { invitations: Invitation[] }) {
+function ReceivedInvitations({
+    invitations,
+    setInvitations,
+}: {
+    invitations: Invitation[];
+    setInvitations: React.Dispatch<
+        React.SetStateAction<{ sent: Invitation[]; received: Invitation[] }>
+    >;
+}) {
     async function handleInvitationStatus(
         id: string,
         status: "accepted" | "rejected"
-    ) {}
+    ) {
+        const res = await fetchClient("/users/invitations", {
+            method: "PUT",
+            data: { id, status },
+            showToast: true,
+        });
+        if (res.success) {
+            setInvitations((prev) => ({
+                ...prev,
+                received: prev.received.map((invite) => {
+                    if (invite._id === id) {
+                        return {
+                            ...invite,
+                            status,
+                        };
+                    }
+                    return invite;
+                }),
+            }));
+        }
+    }
     return (
         <div className="space-y-4">
             {invitations.length === 0 ? (
@@ -168,36 +306,54 @@ function ReceivedInvitations({ invitations }: { invitations: Invitation[] }) {
                                         : "Connect as Friends"}
                                 </p>
                                 <p className="text-xs text-gray-400 mt-1">
-                                    {invite.createdAt.toLocaleDateString()}
+                                    {new Date(
+                                        invite.createdAt
+                                    ).toLocaleDateString()}
                                 </p>
                             </div>
                         </div>
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() =>
-                                    handleInvitationStatus(
-                                        invite._id,
-                                        "rejected"
-                                    )
-                                }
-                                className="p-2 text-gray-400 hover:bg-red-50 hover:text-red-500 rounded-lg transition-colors"
-                                title="Reject"
-                            >
-                                <X size={20} />
-                            </button>
-                            <button
-                                onClick={() =>
-                                    handleInvitationStatus(
-                                        invite._id,
-                                        "accepted"
-                                    )
-                                }
-                                className="p-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg shadow-md transition-colors"
-                                title="Accept"
-                            >
-                                <Check size={20} />
-                            </button>
-                        </div>
+
+                        {invite.status === "pending" && (
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() =>
+                                        handleInvitationStatus(
+                                            invite._id,
+                                            "rejected"
+                                        )
+                                    }
+                                    className="p-2 text-gray-400 hover:bg-red-50 hover:text-red-500 rounded-lg transition-colors"
+                                    title="Reject"
+                                >
+                                    <X size={20} />
+                                </button>
+                                <button
+                                    onClick={() =>
+                                        handleInvitationStatus(
+                                            invite._id,
+                                            "accepted"
+                                        )
+                                    }
+                                    className="p-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg shadow-md transition-colors"
+                                    title="Accept"
+                                >
+                                    <Check size={20} />
+                                </button>
+                            </div>
+                        )}
+
+                        {invite.status === "accepted" && (
+                            <div className="flex items-center flex-row gap-2 px-4 py-2 rounded bg-emerald-500/50 cursor-pointer text-white">
+                                <Check size={16} />
+                                <p className="text-sm">Accepted</p>
+                            </div>
+                        )}
+                        {invite.status === "rejected" && (
+                            <div className="flex items-center flex-row gap-2 px-4 py-2 rounded bg-red-500/50 cursor-pointer text-white">
+                                <X size={16} />
+                                <p className="text-sm">Rejected</p>
+                            </div>
+                        )}
                     </div>
                 ))
             )}
@@ -205,25 +361,68 @@ function ReceivedInvitations({ invitations }: { invitations: Invitation[] }) {
     );
 }
 
-function SendInvitation() {
+function SendInvitation({
+    setInvitations,
+}: {
+    setInvitations: React.Dispatch<
+        React.SetStateAction<{ sent: Invitation[]; received: Invitation[] }>
+    >;
+}) {
     const [inputType, setInputType] = useState("email");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
 
-    const handleSend = (e: React.FormEvent) => {
+    const handleSend = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError(null);
         setSuccess(null);
 
-        console.log("Sending invitation to");
+        const formData = new FormData(e.currentTarget);
+        const values = Object.fromEntries(formData.entries());
+
+        if (inputType === "email") {
+            if (!values.email) {
+                setError("Email is required");
+                return;
+            }
+            if (!values.email.toString().match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+                setError("Invalid email address");
+                return;
+            }
+        }
+        if (inputType === "phone") {
+            if (!values.phone) {
+                setError("Phone is required");
+                return;
+            }
+            if (!values.phone.toString().match(/^[+][0-9]{1,3}-[0-9]{10}$/)) {
+                setError("Invalid phone number");
+                return;
+            }
+        }
+        setLoading(true);
+        const res = await fetchClient("/users/invitations", {
+            method: "POST",
+            data: values,
+        });
+        setLoading(false);
+        if (res.success) {
+            setSuccess(res.message);
+            setInvitations((prev) => ({
+                ...prev,
+                sent: [...prev.sent, res.data],
+            }));
+        } else {
+            setError(res.error);
+        }
     };
 
     return (
         <div className="bg-white border border-gray-200 rounded-2xl p-8 shadow-sm">
             {error && (
                 <div className="mb-6 p-3 rounded-lg bg-red-50 text-red-600 text-sm font-medium flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                    <TriangleAlert size={14} />
                     {error}
                 </div>
             )}

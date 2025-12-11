@@ -8,7 +8,7 @@ export default function MainLayout({
 }) {
     return (
         <SessionProvider>
-            <div className="grid grid-cols-[auto_1fr] h-screen bg-gray-50">
+            <div className="md:grid md:grid-cols-[auto_1fr] flex flex-col h-screen bg-gray-50">
                 <Sidebar />
                 {children}
             </div>

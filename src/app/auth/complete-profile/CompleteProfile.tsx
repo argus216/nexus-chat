@@ -28,11 +28,10 @@ export default function CompleteProfile() {
             return;
         }
         setLoading(true);
-        const res = await fetchClient(
-            "/auth/complete-profile",
-            { phone },
-            { method: "POST" }
-        );
+        const res = await fetchClient("/auth/complete-profile", {
+            method: "POST",
+            data: { phone },
+        });
         if (res.success) {
             await refreshSession();
             router.push("/");

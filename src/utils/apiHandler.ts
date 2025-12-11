@@ -4,14 +4,17 @@ import { APIResponse } from "@/types/API";
 
 export function apiHandler<T = any>(
     fn: (
-        req: NextRequest
+        req: NextRequest,
+        params: any
     ) => Promise<NextResponse<APIResponse<T>> | APIResponse<T>>
 ) {
     return async function (
-        req: NextRequest
+        req: NextRequest,
+        ctx: { params: Promise<any> }
     ): Promise<NextResponse<APIResponse<T>>> {
         try {
-            const res = await fn(req);
+            const params = await ctx.params;
+            const res = await fn(req, params);
             if (res instanceof NextResponse) {
                 return res;
             }
